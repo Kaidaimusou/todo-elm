@@ -1,7 +1,13 @@
-import Browser
+import Browser exposing (UrlRequest)
+import Browser.Navigation as Navigation
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+
+import Json.Decode as Json
+import Url exposing (Url)
+import Url.Parser as UrlParser exposing ((</>))
+
 import Bootstrap.CDN as CDN
 import Bootstrap.Grid as Grid
 import Bootstrap.Alert as Alert
@@ -11,16 +17,20 @@ import Bootstrap.Form.Checkbox as Checkbox
 import Bootstrap.Button as Button
 import Bootstrap.Table as Table
 import Bootstrap.Navbar as Navbar
-import Json.Decode as Json
 
-main : Program () Model Msg
+main : Program Flags Model Msg
 main =
-    Browser.element
+    Browser.application
         { init = init
         , update = update
         , view = view
         , subscriptions = subscriptions
+        , onUrlRequest = ClickedLink
+        , onUrlChange = UrlChange
         }
+
+type alias Flags =
+    {}
 
 type alias Todo =
     { number: Int
@@ -29,24 +39,36 @@ type alias Todo =
     }
 
 type alias Model =
-    { input : String
+    { page: Page
+    , input : String
     , memos: List Todo
     , navbarState : Navbar.State
+    , navKey : Navigation.Key
     }
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+type Page
+    = UnDone
+    | Done
+    | NotFound
+
+init : Flags -> Url -> Navigation.Key -> ( Model, Cmd Msg )
+init flags url key =
     let
-        (navbarState, navbarCmd)
+        ( navbarState, navCmd )
             = Navbar.initialState NavbarMsg
+        
+        ( model, urlCmd ) =
+            urlUpdate url { page = UnDone, input = "", memos = [], navbarState = navbarState, navKey = key }
     in
-        ( { input = "", memos = [], navbarState = navbarState }, navbarCmd )
+        ( model, Cmd.batch [ urlCmd, navCmd ] )
 
 type Msg
     = Input String
     | Submit
     | Check Int Bool
     | NavbarMsg Navbar.State
+    | UrlChange Url
+    | ClickedLink UrlRequest
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -72,44 +94,83 @@ update msg model =
         
         NavbarMsg state ->
             ( { model | navbarState = state }, Cmd.none )
+        
+        UrlChange url ->
+            urlUpdate url model
+        
+        ClickedLink req ->
+            case req of
+                Browser.Internal url ->
+                    ( model, Navigation.pushUrl model.navKey <| Url.toString url )
+                
+                Browser.External href ->
+                    ( model, Navigation.load href )
 
-view : Model -> Html Msg
+urlUpdate : Url -> Model -> ( Model, Cmd Msg)
+urlUpdate url model =
+    case decode url of
+        Nothing ->
+            ( { model | page = NotFound }, Cmd.none )
+        
+        Just route ->
+            ( { model | page = route }, Cmd.none )
+
+decode : Url -> Maybe Page
+decode url =
+    { url | path = Maybe.withDefault "" url.fragment, fragment = Nothing }
+    |> UrlParser.parse routeParser
+
+routeParser : UrlParser.Parser (Page -> a) a
+routeParser =
+    UrlParser.oneOf
+        [ UrlParser.map UnDone UrlParser.top
+        , UrlParser.map Done (UrlParser.s "undone")
+        ]
+
+view : Model -> Browser.Document Msg
 view model =
-    Grid.container []
-        [ CDN.stylesheet
-        , Alert.simpleSecondary [] [
-            h1 [ class "text-center" ] [ text "Todo" ]
+    { title = "Elm Todo Tutorial"
+    , body =
+        [
+            Grid.container [] <|
+                case model.page of
+                    UnDone ->
+                        let
+                            todos = List.filter (\todo -> not todo.isDone) model.memos
+                        in
+                            [ CDN.stylesheet
+                            , Alert.simpleSecondary [] [
+                                h1 [ class "text-center" ] [ text "Todo" ]
+                            ]
+                            , navBar model
+                            , Form.form [ onSubmit Submit ]
+                                [ Form.group []
+                                    [ Form.label [ for "task" ] [ text "task" ]
+                                    , Input.text [ Input.value model.input, Input.onInput Input ] 
+                                    ]
+                                , Form.group [] [
+                                    Button.button
+                                        [ Button.secondary, Button.attrs [disabled (String.length model.input < 1)] ]
+                                        [ text "Submit" ]
+                                    ]
+                                ]
+                            , table todos
+                            ]
+                    Done ->
+                        let
+                            todos = List.filter (\todo -> todo.isDone) model.memos
+                        in
+                            [ CDN.stylesheet
+                            , Alert.simpleSecondary [] [
+                                h1 [ class "text-center" ] [ text "Todo" ]
+                            ]
+                            , navBar model
+                            , table todos
+                            ]
+                    NotFound ->
+                        pageNotFound
         ]
-        , Navbar.config NavbarMsg
-            |> Navbar.withAnimation
-            |> Navbar.brand [ href "#" ] [ text "Brand" ]
-            |> Navbar.items
-                [ Navbar.itemLink [ href "#" ] [ text "Item 1" ]
-                , Navbar.itemLink [ href "#" ] [ text "Item 2" ]
-                ]
-            |> Navbar.view model.navbarState
-        , Form.form [ onSubmit Submit ]
-            [ Form.group []
-                [ Form.label [ for "task" ] [ text "task" ]
-                , Input.text [ Input.value model.input, Input.onInput Input ] 
-                ]
-            , Form.group [] [
-                Button.button
-                    [ Button.secondary, Button.attrs [disabled (String.length model.input < 1)] ]
-                    [ text "Submit" ]
-                ]
-            ]
-        , Table.table
-            { options = [ Table.striped, Table.inversed]
-            , thead = Table.simpleThead
-                [ Table.th [] [ text "Number" ]
-                , Table.th [] [ text "Task" ]
-                , Table.th [] [ text "isDone" ]
-                ]
-            , tbody = 
-                Table.tbody [] (List.map viewMemo model.memos)
-            }
-        ]
+    }
 
 viewMemo : Todo -> Table.Row Msg
 viewMemo todo =
@@ -129,3 +190,34 @@ viewMemo todo =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Navbar.subscriptions model.navbarState NavbarMsg
+
+navBar : Model -> Html Msg
+navBar model =
+    Navbar.config NavbarMsg
+        |> Navbar.withAnimation
+        |> Navbar.container
+        |> Navbar.brand [ href "#" ] [ text "Brand" ]
+        |> Navbar.items
+            [ Navbar.itemLink [ href "/" ] [ text "Done" ]
+            , Navbar.itemLink [ href "/undone" ] [ text "UnDone" ]
+            ]
+        |> Navbar.view model.navbarState
+
+table : List Todo -> Html Msg
+table todos =
+    Table.table
+        { options = [ Table.striped, Table.inversed ]
+        , thead = Table.simpleThead
+            [ Table.th [] [ text "Number" ]
+            , Table.th [] [ text "Task" ]
+            , Table.th [] [ text "isDone" ]
+            ]
+        , tbody = 
+            Table.tbody [] (List.map viewMemo todos)
+        }
+
+pageNotFound : List (Html Msg)
+pageNotFound =
+    [ h1 [] [ text "Not Found" ]
+    , text "Sorry coudn't find that page"
+    ]
