@@ -17,6 +17,7 @@ import Bootstrap.Form.Checkbox as Checkbox
 import Bootstrap.Button as Button
 import Bootstrap.Table as Table
 import Bootstrap.Navbar as Navbar
+import Bootstrap.Utilities.Spacing as Spacing
 
 main : Program Flags Model Msg
 main =
@@ -44,6 +45,7 @@ type alias Model =
     , memos: List Todo
     , navbarState : Navbar.State
     , navKey : Navigation.Key
+    , url : Url.Url
     }
 
 type Page
@@ -58,7 +60,7 @@ init flags url key =
             = Navbar.initialState NavbarMsg
         
         ( model, urlCmd ) =
-            urlUpdate url { page = UnDone, input = "", memos = [], navbarState = navbarState, navKey = key }
+            urlUpdate url { page = UnDone, input = "", memos = [], navbarState = navbarState, navKey = key, url = url }
     in
         ( model, Cmd.batch [ urlCmd, navCmd ] )
 
@@ -106,25 +108,24 @@ update msg model =
                 Browser.External href ->
                     ( model, Navigation.load href )
 
-urlUpdate : Url -> Model -> ( Model, Cmd Msg)
+urlUpdate : Url.Url -> Model -> ( Model, Cmd Msg)
 urlUpdate url model =
     case decode url of
         Nothing ->
             ( { model | page = NotFound }, Cmd.none )
-        
-        Just route ->
-            ( { model | page = route }, Cmd.none )
+        Just page ->
+            ( { model | page = page }, Cmd.none )
 
-decode : Url -> Maybe Page
+decode : Url.Url -> Maybe Page
 decode url =
     { url | path = Maybe.withDefault "" url.fragment, fragment = Nothing }
-    |> UrlParser.parse routeParser
+    |> UrlParser.parse parser
 
-routeParser : UrlParser.Parser (Page -> a) a
-routeParser =
+parser : UrlParser.Parser (Page -> a) a
+parser =
     UrlParser.oneOf
         [ UrlParser.map UnDone UrlParser.top
-        , UrlParser.map Done (UrlParser.s "undone")
+        , UrlParser.map Done (UrlParser.s "done")
         ]
 
 view : Model -> Browser.Document Msg
@@ -165,6 +166,7 @@ view model =
                                 h1 [ class "text-center" ] [ text "Todo" ]
                             ]
                             , navBar model
+                            , div [ Spacing.mb3 ] []
                             , table todos
                             ]
                     NotFound ->
@@ -196,17 +198,16 @@ navBar model =
     Navbar.config NavbarMsg
         |> Navbar.withAnimation
         |> Navbar.container
-        |> Navbar.brand [ href "#" ] [ text "Brand" ]
         |> Navbar.items
-            [ Navbar.itemLink [ href "/" ] [ text "Done" ]
-            , Navbar.itemLink [ href "/undone" ] [ text "UnDone" ]
+            [ Navbar.itemLink [ href "/" ] [ text "UnDone" ]
+            , Navbar.itemLink [ href "#done" ] [ text "Done" ]
             ]
         |> Navbar.view model.navbarState
 
 table : List Todo -> Html Msg
 table todos =
     Table.table
-        { options = [ Table.striped, Table.inversed ]
+        { options = [ Table.striped, Table.hover, Table.inversed ]
         , thead = Table.simpleThead
             [ Table.th [] [ text "Number" ]
             , Table.th [] [ text "Task" ]
